@@ -1,0 +1,274 @@
+
+
+#define RESTRICT_X_TRANS 2
+#define FAR 5
+#define NEAR 9
+#define IN 24
+
+#define CD 1
+
+#define GLT 2
+#define GRT 2
+
+MODULE main
+
+VAR
+  train : train;
+  save_t : save_train;
+  controller : controller(train.x, save_t.xs1, save_t.xs2);
+  gate : gate;
+
+SYNC controller, gate EVENTS lower, lower;
+SYNC controller, gate EVENTS raise, raise;
+
+SYNC train, save_t EVENTS exit, exit;
+SYNC train, save_t EVENTS stay_far, stay_far;
+
+INVARSPEC (!(train.loc = loc_in & gate.loc = up));
+
+-- INVARSPEC (!(save_t.xs1 > save_t.xs2));
+
+-- INVARSPEC (!(train.loc = far));
+-- INVARSPEC (!(train.loc = near));
+-- INVARSPEC (!(train.loc = loc_in));
+
+-- INVARSPEC (!(gate.loc = up));
+-- INVARSPEC (!(gate.loc = lower));
+-- INVARSPEC (!(gate.loc = down));
+-- INVARSPEC (!(gate.loc = raise));
+
+-- INVARSPEC (!(controller.loc = raise1));
+-- INVARSPEC (!(controller.loc = raise2));
+-- INVARSPEC (!(controller.loc = raise3));
+
+-- INVARSPEC (!train.reset_x);
+
+-- INVARSPEC (!(controller.loc = lower1));
+-- INVARSPEC (!(controller.loc = lower2));
+-- INVARSPEC (!(controller.loc = lower3));
+
+-- INVARSPEC (!(controller.loc = down1));
+-- INVARSPEC (!(controller.loc = down2));
+-- INVARSPEC (!(controller.loc = down3));
+
+-- INVARSPEC (!(save_t.xs1 > 24 & controller.loc = down1));
+-- INVARSPEC (!(save_t.xs2 > 24 & controller.loc = down2));
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE train
+
+VAR
+  x : continuous;
+  restrict_x : continuous;
+  loc : {far, near, loc_in};
+
+EVENT approach, e_in, exit, stay_far;
+
+FLOW
+  der(x) = 1;
+
+FLOW
+  der(restrict_x) = 1;
+
+INIT
+  (loc = far & x = 0 & restrict_x = 0);
+
+INVAR
+  (loc = far -> x <= FAR) &
+  (loc = near -> x <= NEAR) &
+  (loc = loc_in -> x <= IN);
+
+TRANS
+  (EVENT = approach ->
+    (loc = far & x = FAR & next(loc) = near & next(x) = x & next(restrict_x) = restrict_x)
+  );
+
+TRANS
+  (EVENT = e_in ->
+    (loc = near & x = NEAR & next(loc) = loc_in & next(x) = x & next(restrict_x) = restrict_x)
+  );
+
+TRANS
+  (EVENT = exit ->
+    (loc = loc_in & x = IN & next(loc) = far & next(x) = 0 & next(restrict_x) = 0)
+  );
+
+TRANS
+  (EVENT = stay_far ->
+    (loc = far & restrict_x >= RESTRICT_X_TRANS & next(loc) = far & next(x) = 0 & next(restrict_x) = 0)
+  );
+
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE controller(x, xs1, xs2)
+
+VAR
+  z : continuous;
+  loc : {
+    up1, up2, up3, 
+    lower1, lower2, lower3, 
+    down1, down2, down3, 
+    raise1, raise2, raise3
+  };
+
+FROZENVAR
+  D : real;
+
+INIT
+  D = 3;
+
+DEFINE
+  loc_up := loc = up1 | loc = up2 | loc = up3;
+  loc_lower := loc = lower1 | loc = lower2 | loc = lower3;
+  loc_down := loc = down1 | loc = down2 | loc = down3;
+  loc_raise := loc = raise1 | loc = raise2 | loc = raise3;
+
+EVENT approach, lower, exit, raise, switch;
+
+FLOW
+  der(z) = 1;
+
+INIT
+  (loc_up & z = 0);
+
+INVAR
+  (loc = lower1 -> (z <= CD & xs1 > xs2 & (xs1 - D) <= IN)) &
+  (loc = lower2 -> (z <= CD & xs2 > xs1 & (xs2 - D) <= IN)) &
+  (loc = lower3 -> (z <= CD & (x - D) <= IN)) &
+
+  (loc = raise1 -> (z <= CD & xs1 > xs2 & (xs1 - D) <= FAR)) &
+  (loc = raise2 -> (z <= CD & xs2 > xs1 & (xs2 - D) <= FAR)) &
+  (loc = raise3 -> (z <= CD & (x - D) <= FAR)) &
+
+  (loc = up1 -> (xs1 > xs2 & (xs1 - D) <= FAR)) &
+  (loc = up2 -> (xs2 > xs1 & (xs2 - D) <= FAR)) &
+  (loc = up3 -> ((x - D) <= FAR)) &
+
+  (loc = down1 -> (xs1 > xs2 & (xs1 - D) <= IN)) &
+  (loc = down2 -> (xs2 > xs1 & (xs2 - D) <= IN)) &
+  (loc = down3 -> ((x - D) <= IN));
+
+TRANS
+  (EVENT = approach ->
+    ((
+      (xs1 > xs2 & (xs1 - D) <= FAR & FAR <= (xs1 - xs2)) |
+      (xs2 > xs1 & (xs2 - D) <= FAR & FAR <= (xs2 - xs1)) |
+      ((x - D) <= FAR & FAR <= x)
+    ) & (loc_up | loc_raise) & 
+      next(z) = 0 & 
+      next(loc_lower)
+    )
+  );
+
+TRANS
+  (EVENT = lower ->
+    (loc_lower & z >= CD & next(z) = z & next(loc_down))
+  );
+
+TRANS
+  (EVENT = exit ->
+    ((
+      (xs1 > xs2 & IN <= (xs1 - xs2)) |
+      (xs2 > xs1 & IN <= (xs2 - xs1)) |
+      (x >= IN)
+    ) & (
+      loc_lower | loc_down
+    ) & next(z) = 0 & next(loc_raise)
+    )
+  );
+
+TRANS
+  (EVENT = raise ->
+    (loc_raise & z >= CD & next(z) = z & next(loc_up))
+  );
+
+TRANS
+  (EVENT = switch ->
+    (
+      (loc_up & next(loc_up)) |
+      (loc_raise & next(loc_raise)) |
+      (loc_down & next(loc_down)) |
+      (loc_lower & next(loc_lower))
+    ) & next(z) = z);
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE gate
+
+VAR
+  y : continuous;
+  loc : {up, lower, down, raise};
+
+EVENT lower, down, raise, up;
+
+FLOW
+  der(y) = 1;
+
+INIT
+  (loc = up & y = 0);
+
+INVAR
+  (loc = lower -> y <= GLT) &
+  (loc = raise -> y <= GRT);
+
+TRANS
+  (EVENT = lower ->
+    (
+      ((loc = up | loc = raise) & next(y) = 0 & next(loc) = lower) |
+      (loc = lower & next(y) = y & next(loc) = lower)
+    )
+  );
+
+TRANS
+  (EVENT = down -> (loc = lower & y = GLT & next(y) = y & next(loc) = down));
+
+TRANS
+  (EVENT = raise ->
+    (
+      ((loc = lower | loc = down) & next(y) = 0 & next(loc) = raise) |
+      (loc = raise & next(y) = y & next(loc) = raise)
+    )
+  );
+
+TRANS
+  (EVENT = up -> (loc = raise & y = GRT & next(y) = y & next(loc) = up));
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE save_train
+
+VAR
+  xs1 : continuous;
+  xs2 : continuous;
+  loc : {s1, s2};
+
+EVENT exit, stay_far;
+
+FLOW
+  der(xs1) = 1;
+
+FLOW
+  der(xs2) = 1;
+
+INIT
+  (loc = s1 & xs1 = 0 & xs2 = 0);
+
+TRANS
+  ((EVENT = exit | EVENT = stay_far) -> 
+    (
+      (
+        loc = s1 & next(xs1) = xs1 & next(xs2) = 0 & 
+        next(loc) = s2
+      ) |
+      (
+        loc = s2 & next(xs2) = xs2 & next(xs1) = 0 &
+        next(loc) = s1
+      )
+    )
+  );

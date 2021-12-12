@@ -1,0 +1,139 @@
+MODULE main
+
+VAR
+  train : train;
+  controller : controller(train.x);
+  gate : gate;
+
+SYNC controller, gate EVENTS lower, lower;
+SYNC controller, gate EVENTS raise, raise;
+
+INVARSPEC (!(train.loc = loc_in & gate.loc = up));
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE train
+
+VAR
+  x : continuous;
+  loc : {far, near, loc_in};
+
+EVENT approach, e_in, exit, stay_far;
+
+FLOW
+  der(x) = 1;
+
+INIT
+  (loc = far & x = 0);
+
+INVAR
+  (loc = far -> x <= 5) &
+  (loc = near -> x <= 9) &
+  (loc = loc_in -> x <= 24);
+
+TRANS
+  (EVENT = approach ->
+    (loc = far & x = 5 & next(loc) = near & next(x) = x)
+  );
+
+TRANS
+  (EVENT = e_in ->
+    (loc = near & x = 9 & next(loc) = loc_in & next(x) = x)
+  );
+
+TRANS
+  (EVENT = exit ->
+    (loc = loc_in & x >= 24 & next(loc) = far & next(x) = 0)
+  );
+
+TRANS
+  (EVENT = stay_far ->
+    (loc = far & next(loc) = far & next(x) = 0)
+  );
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE controller(train_x)
+
+VAR
+  z : continuous;
+  loc : {up, lower, down, raise};
+
+EVENT approach, lower, exit, raise;
+
+FLOW
+  der(z) = 1;
+
+INIT
+  (loc = up & z = 0);
+
+INVAR
+  (loc = lower -> (z <= 1 & train_x <= 24)) &
+  (loc = raise -> (z <= 1 & train_x <= 5)) &
+  (loc = up -> train_x <= 5) &
+  (loc = down -> train_x <= 24);
+
+TRANS
+  (EVENT = approach ->
+    (train_x = 5 & (loc = up | loc = raise) & next(z) = 0 & next(loc) = lower)
+  );
+
+TRANS
+  (EVENT = lower ->
+    (loc = lower & z >= 1 & next(z) = z & next(loc) = down)
+  );
+
+TRANS
+  (EVENT = exit ->
+    (train_x >= 24 & (loc = lower | loc = down) & next(z) = 0 & next(loc) = raise)
+  );
+
+TRANS
+  (EVENT = raise ->
+    (loc = raise & z >= 1 & next(z) = z & next(loc) = up)
+  );
+
+--------------------------------------------------------------
+--------------------------------------------------------------
+
+MODULE gate
+
+VAR
+  y : continuous;
+  loc : {up, lower, down, raise};
+
+EVENT lower, down, raise, up;
+
+FLOW
+  der(y) = 1;
+
+INIT
+  (loc = up & y = 0);
+
+INVAR
+  (loc = lower -> y <= 2) &
+  (loc = raise -> y <= 2);
+
+TRANS
+  (EVENT = lower ->
+    (
+      ((loc = up | loc = raise) & next(y) = 0 & next(loc) = lower) |
+      (loc = lower & next(y) = y & next(loc) = lower)
+    )
+  );
+
+TRANS
+  (EVENT = down -> (loc = lower & y = 2 & next(y) = y & next(loc) = down));
+
+TRANS
+  (EVENT = raise ->
+    (
+      ((loc = lower | loc = down) & next(y) = 0 & next(loc) = raise) |
+      (loc = raise & next(y) = y & next(loc) = raise)
+    )
+  );
+
+TRANS
+  (EVENT = up -> (loc = raise & y = 2 & next(y) = y & next(loc) = up));
